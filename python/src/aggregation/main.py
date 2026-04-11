@@ -1,6 +1,7 @@
 import os
 import logging
 import bisect
+import signal
 
 from common import middleware, message_protocol, fruit_item
 
@@ -17,15 +18,32 @@ TOP_SIZE = int(os.environ["TOP_SIZE"])
 class AggregationFilter:
 
     def __init__(self):
+        """
+        Initializes the AggregationFilter by setting up the input exchange and output queue.
+        A signal handler for SIGTERM is also registered to ensure graceful shutdown of the filter.
+        """
         self.input_exchange = middleware.MessageMiddlewareExchangeRabbitMQ(
             MOM_HOST, AGGREGATION_PREFIX, [f"{AGGREGATION_PREFIX}_{ID}"]
         )
         self.output_queue = middleware.MessageMiddlewareQueueRabbitMQ(
             MOM_HOST, OUTPUT_QUEUE
         )
+
         self.fruit_top = []
 
+        signal.signal(signal.SIGTERM, self._handle_sigterm)
+
+    def _handle_sigterm(self, signum, frame):
+        """
+        Handles the SIGTERM signal by stopping the AggregationFilter.
+        """
+        logging.info("SIGTERM received, stopping the filter...")
+        self.stop()
+
     def _process_data(self, fruit, amount):
+        """
+        Processes a data message by updating the top fruits list with the new fruit and amount.
+        """
         logging.info("Processing data message")
         for i in range(len(self.fruit_top)):
             if self.fruit_top[i].fruit == fruit:
@@ -36,6 +54,9 @@ class AggregationFilter:
         bisect.insort(self.fruit_top, fruit_item.FruitItem(fruit, amount))
 
     def _process_eof(self):
+        """
+        Processes an EOF message by sending the top fruits to the output queue.
+        """
         logging.info("Received EOF")
         fruit_chunk = list(self.fruit_top[-TOP_SIZE:])
         fruit_chunk.reverse()
@@ -49,6 +70,9 @@ class AggregationFilter:
         del self.fruit_top
 
     def process_messsage(self, message, ack, nack):
+        """
+        Processes a message by determining if it's a data message or an EOF message and calling the appropriate processing function.
+        """
         logging.info("Process message")
         fields = message_protocol.internal.deserialize(message)
         if len(fields) == 2:
@@ -58,10 +82,24 @@ class AggregationFilter:
         ack()
 
     def start(self):
+        """
+        Starts consuming messages from the input exchange.
+        """
         self.input_exchange.start_consuming(self.process_messsage)
+
+    def stop(self):
+        """
+        Stop consuming messages, close the input exchange and close the output queue.
+        """
+        self.input_exchange.stop_consuming()
+        self.input_exchange.close()
+        self.output_queue.close()
 
 
 def main():
+    """
+    Main function that initializes the AggregationFilter and starts the filter.
+    """
     logging.basicConfig(level=logging.INFO)
     aggregation_filter = AggregationFilter()
     aggregation_filter.start()
