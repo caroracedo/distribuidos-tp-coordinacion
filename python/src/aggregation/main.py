@@ -31,7 +31,7 @@ class AggregationFilter:
             MOM_HOST, OUTPUT_QUEUE
         )
 
-        self.fruit_top_by_client = {}  # {client_id: [fruit]}
+        self.fruit_amounts_by_client = {}  # {client_id: {fruit: amount}}
         self.client_eof_counts = {}  # {client_id: int}
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
@@ -45,26 +45,24 @@ class AggregationFilter:
 
     def _process_data(self, client_id, fruit, amount):
         """
-        Processes a data message by updating the top fruits for the given client ID.
+        Processes a data message by updating the fruit amounts for the given client ID and fruit.
         """
         logging.info(f"Processing data message for client: {client_id}")
-        fruit_top = self.fruit_top_by_client.setdefault(client_id, [])
-        for i in range(len(fruit_top)):
-            if fruit_top[i].fruit == fruit:
-                bisect.insort(
-                    fruit_top, fruit_top.pop(i) + fruit_item.FruitItem(fruit, amount)
-                )
-                return
-        bisect.insort(fruit_top, fruit_item.FruitItem(fruit, amount))
+        fruit_top = self.fruit_amounts_by_client.setdefault(client_id, {})
+        fruit_top[fruit] = fruit_top.get(
+            fruit, fruit_item.FruitItem(fruit, 0)
+        ) + fruit_item.FruitItem(fruit, int(amount))
 
     def _process_eof(self, client_id):
         """
-        Processes an EOF message by sending the top fruits for the given client ID to the output queue and then removing the client ID from the fruit top when all EOF messages have been received.
+        Processes an EOF message by sending the top fruits for the given client ID to the output queue when all EOF messages have been received.
         """
         logging.info(f"Received EOF for client: {client_id}")
         self.client_eof_counts[client_id] = self.client_eof_counts.get(client_id, 0) + 1
         if self.client_eof_counts[client_id] == SUM_AMOUNT:
-            fruit_chunk = list(self.fruit_top_by_client[client_id][-TOP_SIZE:])
+            fruit_chunk = sorted(self.fruit_amounts_by_client[client_id].values())[
+                -TOP_SIZE:
+            ]
             fruit_chunk.reverse()
             fruit_top = list(
                 map(
@@ -75,7 +73,8 @@ class AggregationFilter:
             self.output_queue.send(
                 message_protocol.internal.serialize([client_id, fruit_top])
             )
-            del self.fruit_top_by_client[client_id]
+            del self.fruit_amounts_by_client[client_id]
+            del self.client_eof_counts[client_id]
 
     def process_messsage(self, message, ack, nack):
         """
