@@ -32,6 +32,7 @@ class AggregationFilter:
         )
 
         self.fruit_top_by_client = {}  # {client_id: [fruit]}
+        self.client_eof_counts = {}  # {client_id: int}
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
@@ -50,16 +51,19 @@ class AggregationFilter:
         fruit_top = self.fruit_top_by_client.setdefault(client_id, [])
         for i in range(len(fruit_top)):
             if fruit_top[i].fruit == fruit:
-                fruit_top[i] = fruit_top[i] + fruit_item.FruitItem(fruit, amount)
+                bisect.insort(
+                    fruit_top, fruit_top.pop(i) + fruit_item.FruitItem(fruit, amount)
+                )
                 return
         bisect.insort(fruit_top, fruit_item.FruitItem(fruit, amount))
 
     def _process_eof(self, client_id):
         """
-        Processes an EOF message by sending the top fruits for the given client ID to the output queue and then removing the client ID from the fruit top.
+        Processes an EOF message by sending the top fruits for the given client ID to the output queue and then removing the client ID from the fruit top when all EOF messages have been received.
         """
         logging.info(f"Received EOF for client: {client_id}")
-        if client_id in self.fruit_top_by_client:
+        self.client_eof_counts[client_id] = self.client_eof_counts.get(client_id, 0) + 1
+        if self.client_eof_counts[client_id] == SUM_AMOUNT:
             fruit_chunk = list(self.fruit_top_by_client[client_id][-TOP_SIZE:])
             fruit_chunk.reverse()
             fruit_top = list(
