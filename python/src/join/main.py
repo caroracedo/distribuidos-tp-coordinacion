@@ -28,6 +28,9 @@ class JoinFilter:
             MOM_HOST, OUTPUT_QUEUE
         )
 
+        self.fruit_top_by_client = {}  # {client_id: [(fruit, amount)]}
+        self.client_eof_counts = {}  # {client_id: int}
+
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
     def _handle_sigterm(self, signum, frame):
@@ -37,13 +40,32 @@ class JoinFilter:
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
 
+    def _process_data(self, client_id, partial_top):
+        """
+        Processes a data message by updating the top fruits for the given client ID and sending the top fruits to the output queue if all EOF messages have been received for the client ID.
+        """
+        logging.info(f"Processing partial top for client: {client_id}")
+        self.fruit_top_by_client[client_id] = (
+            self.fruit_top_by_client.get(client_id, []) + partial_top
+        )
+        self.client_eof_counts[client_id] = self.client_eof_counts.get(client_id, 0) + 1
+        if self.client_eof_counts[client_id] == AGGREGATION_AMOUNT:
+            final_top = sorted(
+                self.fruit_top_by_client[client_id], key=lambda x: x[1], reverse=True
+            )[:TOP_SIZE]
+            self.output_queue.send(
+                message_protocol.internal.serialize([client_id, final_top])
+            )
+            del self.fruit_top_by_client[client_id]
+            del self.client_eof_counts[client_id]
+
     def process_messsage(self, message, ack, nack):
         """
-        Processes a message by deserializing the message, sending the top fruits to the output queue, and acknowledging the message.
+        Processes a message by deserializing it and processing the data.
         """
-        logging.info("Received top")
-        fruit_top = message_protocol.internal.deserialize(message)
-        self.output_queue.send(message_protocol.internal.serialize(fruit_top))
+        logging.info("Process message")
+        fields = message_protocol.internal.deserialize(message)
+        self._process_data(*fields)
         ack()
 
     def start(self):

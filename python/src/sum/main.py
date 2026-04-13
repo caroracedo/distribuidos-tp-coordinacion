@@ -2,6 +2,7 @@ import os
 import logging
 import signal
 import threading
+import hashlib
 
 from common import middleware, message_protocol, fruit_item
 
@@ -54,6 +55,14 @@ class SumFilter:
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
 
+    def _get_aggregator_index(self, fruit):
+        """
+        Gets the index of the aggregator for the given fruit by hashing the fruit name and taking the modulus with the number of aggregators.
+        """
+        return (
+            int(hashlib.md5(fruit.encode("utf-8")).hexdigest(), 16) % AGGREGATION_AMOUNT
+        )
+
     def _process_data(self, client_id, fruit, amount):
         """
         Processes a data message by updating the fruit amounts for the given client ID.
@@ -75,17 +84,18 @@ class SumFilter:
 
     def _process_eof_from_control(self, client_id):
         """
-        Processes an EOF message from the control by sending the final fruit amounts for the given client ID to all data output exchanges and then sending an EOF message for the client ID to all data output exchanges.
+        Processes an EOF message from the control by sending the final fruit amounts for the given client ID to the appropriate data output exchanges and then sending an EOF message for the client ID to all data output exchanges.
         """
         logging.info(f"Processing EOF from control for client: {client_id}")
         if client_id in self.fruit_amounts_by_client:
             for final_fruit_item in self.fruit_amounts_by_client[client_id].values():
-                for data_output_exchange in self.data_output_exchanges:
-                    data_output_exchange.send(
-                        message_protocol.internal.serialize(
-                            [client_id, final_fruit_item.fruit, final_fruit_item.amount]
-                        )
+                self.data_output_exchanges[
+                    self._get_aggregator_index(final_fruit_item.fruit)
+                ].send(
+                    message_protocol.internal.serialize(
+                        [client_id, final_fruit_item.fruit, final_fruit_item.amount]
                     )
+                )
             del self.fruit_amounts_by_client[client_id]
 
         logging.info(f"Broadcasting EOF message for client: {client_id}")
