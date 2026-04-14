@@ -16,8 +16,6 @@ AGGREGATION_AMOUNT = int(os.environ["AGGREGATION_AMOUNT"])
 AGGREGATION_PREFIX = os.environ["AGGREGATION_PREFIX"]
 
 EXPECTED_DATA_FIELDS_LENGTH = 3
-EOF = "EOF"
-CONTROL_EOF = "CONTROL_EOF"
 
 
 class SumFilter:
@@ -75,11 +73,11 @@ class SumFilter:
 
     def _process_eof_from_gateway(self, client_id):
         """
-        Processes an EOF message from the gateway by sending a CONTROL_EOF message for the given client ID to the output control exchange.
+        Processes an EOF message from the gateway by sending a message to the output control exchange to indicate that the given client ID has sent an EOF message.
         """
         logging.info(f"Processing EOF from gateway for client: {client_id}")
         self.output_control_exchange.send(
-            message_protocol.internal.serialize([client_id, CONTROL_EOF])
+            message_protocol.internal.serialize([client_id])
         )
 
     def _process_eof_from_control(self, client_id):
@@ -102,17 +100,23 @@ class SumFilter:
         for data_output_exchange in self.data_output_exchanges:
             data_output_exchange.send(message_protocol.internal.serialize([client_id]))
 
-    def process_data_messsage(self, message, ack, nack):
+    def process_data_messsage_from_gateway(self, message, ack, nack):
         """
-        Processes a message by deserializing it and determining whether it's a data message, an EOF message from the gateway, or an EOF message from the control, and then calling the appropriate processing function.
+        Processes a message from the gateway by deserializing it and determining whether it's a data message or an EOF message, and then calling the appropriate processing function.
         """
         fields = message_protocol.internal.deserialize(message)
         if len(fields) == EXPECTED_DATA_FIELDS_LENGTH:
             self._process_data(*fields)
-        elif fields[1] == EOF:
-            self._process_eof_from_gateway(fields[0])
-        elif fields[1] == CONTROL_EOF:
-            self._process_eof_from_control(fields[0])
+        else:
+            self._process_eof_from_gateway(*fields)
+        ack()
+
+    def process_data_messsage_from_control(self, message, ack, nack):
+        """
+        Processes a message from the control by deserializing it and calling the function to process an EOF message.
+        """
+        fields = message_protocol.internal.deserialize(message)
+        self._process_eof_from_control(*fields)
         ack()
 
     def start(self):
@@ -121,10 +125,10 @@ class SumFilter:
         """
         control_thread = threading.Thread(
             target=self.input_control_exchange.start_consuming,
-            args=(self.process_data_messsage,),
+            args=(self.process_data_messsage_from_control,),
         )
         control_thread.start()
-        self.input_queue.start_consuming(self.process_data_messsage)
+        self.input_queue.start_consuming(self.process_data_messsage_from_gateway)
 
     def stop(self):
         """

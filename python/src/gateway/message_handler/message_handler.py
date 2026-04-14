@@ -2,8 +2,6 @@ import uuid
 
 from common import message_protocol
 
-EOF = "EOF"
-
 
 class MessageHandler:
 
@@ -23,7 +21,7 @@ class MessageHandler:
         """
         Serializes an EOF message by including the client ID and using the internal serialization method.
         """
-        return message_protocol.internal.serialize([self.client_id, EOF])
+        return message_protocol.internal.serialize([self.client_id])
 
     def deserialize_result_message(self, message):
         """
