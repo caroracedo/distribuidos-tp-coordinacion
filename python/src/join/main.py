@@ -89,7 +89,15 @@ def main():
     """
     logging.basicConfig(level=logging.INFO)
     join_filter = JoinFilter()
-    join_filter.start()
+    try:
+        join_filter.start()
+    except Exception as e:
+        logging.error(f"Error executing JoinFilter: {e}")
+    finally:
+        try:
+            join_filter.stop()
+        except Exception as e:
+            logging.error(f"Error while stopping JoinFilter: {e}")
     return 0
 
 

@@ -109,7 +109,15 @@ def main():
     """
     logging.basicConfig(level=logging.INFO)
     aggregation_filter = AggregationFilter()
-    aggregation_filter.start()
+    try:
+        aggregation_filter.start()
+    except Exception as e:
+        logging.error(f"Error executing AggregationFilter: {e}")
+    finally:
+        try:
+            aggregation_filter.stop()
+        except Exception as e:
+            logging.error(f"Error while stopping AggregationFilter: {e}")
     return 0
 
 
