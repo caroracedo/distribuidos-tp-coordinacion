@@ -16,6 +16,7 @@ AGGREGATION_AMOUNT = int(os.environ["AGGREGATION_AMOUNT"])
 AGGREGATION_PREFIX = os.environ["AGGREGATION_PREFIX"]
 
 EXPECTED_DATA_FIELDS_LENGTH = 3
+EOF_WAIT_TIMEOUT = 1
 
 
 class SumFilter:
@@ -44,6 +45,10 @@ class SumFilter:
 
         self.fruit_amounts_by_client = {}  # {client_id: {fruit: amount}}
 
+        self.dict_lock = threading.Lock()
+        self.shutdown_event = threading.Event()
+        self.control_thread = None
+
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
     def _handle_sigterm(self, signum, frame):
@@ -65,36 +70,44 @@ class SumFilter:
         """
         Processes a data message by updating the fruit amounts for the given client ID.
         """
-        logging.info(f"Process data for client: {client_id}")
-        client_fruit_amounts = self.fruit_amounts_by_client.setdefault(client_id, {})
-        client_fruit_amounts[fruit] = client_fruit_amounts.get(
-            fruit, fruit_item.FruitItem(fruit, 0)
-        ) + fruit_item.FruitItem(fruit, int(amount))
+        with self.dict_lock:
+            logging.info(f"Process data for client: {client_id}")
+            client_fruit_amounts = self.fruit_amounts_by_client.setdefault(
+                client_id, {}
+            )
+            client_fruit_amounts[fruit] = client_fruit_amounts.get(
+                fruit, fruit_item.FruitItem(fruit, 0)
+            ) + fruit_item.FruitItem(fruit, int(amount))
 
     def _process_eof_from_gateway(self, client_id):
         """
         Processes an EOF message from the gateway by sending a message to the output control exchange to indicate that the given client ID has sent an EOF message.
         """
         logging.info(f"Processing EOF from gateway for client: {client_id}")
-        self.output_control_exchange.send(
-            message_protocol.internal.serialize([client_id])
-        )
+        self.shutdown_event.wait(timeout=EOF_WAIT_TIMEOUT)
+        if not self.shutdown_event.is_set():
+            self.output_control_exchange.send(
+                message_protocol.internal.serialize([client_id])
+            )
 
     def _process_eof_from_control(self, client_id):
         """
         Processes an EOF message from the control by sending the final fruit amounts for the given client ID to the appropriate data output exchanges and then sending an EOF message for the client ID to all data output exchanges.
         """
         logging.info(f"Processing EOF from control for client: {client_id}")
-        if client_id in self.fruit_amounts_by_client:
-            for final_fruit_item in self.fruit_amounts_by_client[client_id].values():
-                self.data_output_exchanges[
-                    self._get_aggregator_index(final_fruit_item.fruit)
-                ].send(
-                    message_protocol.internal.serialize(
-                        [client_id, final_fruit_item.fruit, final_fruit_item.amount]
+        with self.dict_lock:
+            if client_id in self.fruit_amounts_by_client:
+                for final_fruit_item in self.fruit_amounts_by_client[
+                    client_id
+                ].values():
+                    self.data_output_exchanges[
+                        self._get_aggregator_index(final_fruit_item.fruit)
+                    ].send(
+                        message_protocol.internal.serialize(
+                            [client_id, final_fruit_item.fruit, final_fruit_item.amount]
+                        )
                     )
-                )
-            del self.fruit_amounts_by_client[client_id]
+                del self.fruit_amounts_by_client[client_id]
 
         logging.info(f"Broadcasting EOF message for client: {client_id}")
         for data_output_exchange in self.data_output_exchanges:
@@ -123,23 +136,27 @@ class SumFilter:
         """
         Starts consuming messages from the input queue and the input control exchange in separate threads.
         """
-        control_thread = threading.Thread(
+        self.control_thread = threading.Thread(
             target=self.input_control_exchange.start_consuming,
             args=(self.process_data_messsage_from_control,),
+            daemon=True,
         )
-        control_thread.start()
+        self.control_thread.start()
         self.input_queue.start_consuming(self.process_data_messsage_from_gateway)
 
     def stop(self):
         """
-        Stop consuming messages from the input queue and the input control exchange, close the input queue, close the input control exchange, and close all data output exchanges.
+        Stop consuming messages, closes all connections and waits for the control thread to finish if it's alive.
         """
+        self.shutdown_event.set()
         self.input_queue.stop_consuming()
         self.input_control_exchange.stop_consuming()
         self.input_queue.close()
         self.input_control_exchange.close()
         for data_output_exchange in self.data_output_exchanges:
             data_output_exchange.close()
+        if self.control_thread and self.control_thread.is_alive():
+            self.control_thread.join()
 
 
 def main():
