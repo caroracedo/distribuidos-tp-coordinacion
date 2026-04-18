@@ -18,8 +18,7 @@ class JoinFilter:
 
     def __init__(self):
         """
-        Initializes the JoinFilter by setting up the input queue and output queue.
-        A signal handler for SIGTERM is also registered to ensure graceful shutdown of the filter.
+        Initialize the filter by setting up input and output queues, internal state, and signal handling for graceful shutdown.
         """
         self.input_queue = middleware.MessageMiddlewareQueueRabbitMQ(
             MOM_HOST, INPUT_QUEUE
@@ -35,14 +34,14 @@ class JoinFilter:
 
     def _handle_sigterm(self, signum, frame):
         """
-        Handles the SIGTERM signal by stopping the JoinFilter.
+        Handle the SIGTERM signal for graceful shutdown.
         """
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
 
     def _process_data(self, client_id, partial_top):
         """
-        Processes a data message by updating the top fruits for the given client ID and sending the top fruits to the output queue if all EOF messages have been received for the client ID.
+        Process a data message by aggregating top fruits and sending the final result when all aggregators have sent data.
         """
         logging.info(f"Processing partial top for client: {client_id}")
         self.fruit_top_by_client[client_id] = (
@@ -59,24 +58,23 @@ class JoinFilter:
             del self.fruit_top_by_client[client_id]
             del self.client_eof_counts[client_id]
 
-    def process_messsage(self, message, ack, nack):
+    def process_message(self, message, ack, nack):
         """
-        Processes a message by deserializing it and processing the data.
+        Process a message by handling the corresponding data.
         """
-        logging.info("Process message")
         fields = message_protocol.internal.deserialize(message)
         self._process_data(*fields)
         ack()
 
     def start(self):
         """
-        Starts consuming messages from the input queue.
+        Start the filter by consuming messages from the input queue.
         """
-        self.input_queue.start_consuming(self.process_messsage)
+        self.input_queue.start_consuming(self.process_message)
 
     def stop(self):
         """
-        Stop consuming messages, close the input queue and close the output queue.
+        Stop consuming messages and close all connections.
         """
         self.input_queue.stop_consuming()
         self.input_queue.close()
@@ -85,7 +83,7 @@ class JoinFilter:
 
 def main():
     """
-    Main function that initializes the JoinFilter and starts the filter.
+    Main function that initializes and runs the JoinFilter.
     """
     logging.basicConfig(level=logging.INFO)
     join_filter = JoinFilter()

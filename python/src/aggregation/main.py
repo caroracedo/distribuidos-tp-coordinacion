@@ -21,8 +21,7 @@ class AggregationFilter:
 
     def __init__(self):
         """
-        Initializes the AggregationFilter by setting up the input exchange and output queue.
-        A signal handler for SIGTERM is also registered to ensure graceful shutdown of the filter.
+        Initialize the filter by setting up input and output messaging infrastructure, internal state, and signal handling for graceful shutdown.
         """
         self.input_exchange = middleware.MessageMiddlewareExchangeRabbitMQ(
             MOM_HOST, AGGREGATION_PREFIX, [f"{AGGREGATION_PREFIX}_{ID}"]
@@ -38,16 +37,16 @@ class AggregationFilter:
 
     def _handle_sigterm(self, signum, frame):
         """
-        Handles the SIGTERM signal by stopping the AggregationFilter.
+        Handle the SIGTERM signal for graceful shutdown.
         """
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
 
     def _process_data(self, client_id, fruit, amount):
         """
-        Processes a data message by updating the fruit amounts for the given client ID and fruit.
+        Process a data message by updating the fruit amounts for the client.
         """
-        logging.info(f"Processing data message for client: {client_id}")
+        logging.info(f"Processing fruit amount for client: {client_id}")
         fruit_top = self.fruit_amounts_by_client.setdefault(client_id, {})
         fruit_top[fruit] = fruit_top.get(
             fruit, fruit_item.FruitItem(fruit, 0)
@@ -55,7 +54,7 @@ class AggregationFilter:
 
     def _process_eof(self, client_id):
         """
-        Processes an EOF message by sending the top fruits for the given client ID to the output queue when all EOF messages have been received.
+        Process an EOF message by computing and sending the top fruits when all EOF messages are received.
         """
         logging.info(f"Received EOF for client: {client_id}")
         self.client_eof_counts[client_id] = self.client_eof_counts.get(client_id, 0) + 1
@@ -76,11 +75,10 @@ class AggregationFilter:
             del self.fruit_amounts_by_client[client_id]
             del self.client_eof_counts[client_id]
 
-    def process_messsage(self, message, ack, nack):
+    def process_message(self, message, ack, nack):
         """
-        Processes a message by determining if it's a data message or an EOF message and calling the appropriate processing function.
+        Process a message by determining if it is a data or EOF message and handling accordingly.
         """
-        logging.info("Process message")
         fields = message_protocol.internal.deserialize(message)
         if len(fields) == EXPECTED_DATA_FIELDS_LENGTH:
             self._process_data(*fields)
@@ -90,13 +88,13 @@ class AggregationFilter:
 
     def start(self):
         """
-        Starts consuming messages from the input exchange.
+        Start the filter by consuming messages from the input exchange.
         """
-        self.input_exchange.start_consuming(self.process_messsage)
+        self.input_exchange.start_consuming(self.process_message)
 
     def stop(self):
         """
-        Stop consuming messages, close the input exchange and close the output queue.
+        Stop consuming messages and close all connections.
         """
         self.input_exchange.stop_consuming()
         self.input_exchange.close()
@@ -105,7 +103,7 @@ class AggregationFilter:
 
 def main():
     """
-    Main function that initializes the AggregationFilter and starts the filter.
+    Main function that initializes and runs the AggregationFilter.
     """
     logging.basicConfig(level=logging.INFO)
     aggregation_filter = AggregationFilter()
