@@ -85,12 +85,16 @@ class AggregationFilter:
         """
         Process a message by determining if it is a data or EOF message and handling accordingly.
         """
-        fields = message_protocol.internal.deserialize(message)
-        if len(fields) == EXPECTED_DATA_FIELDS_LENGTH:
-            self._process_data(*fields)
-        else:
-            self._process_eof(*fields)
-        ack()
+        try:
+            fields = message_protocol.internal.deserialize(message)
+            if len(fields) == EXPECTED_DATA_FIELDS_LENGTH:
+                self._process_data(*fields)
+            else:
+                self._process_eof(*fields)
+            ack()
+        except Exception:
+            nack()
+            raise
 
     # --- Lifecycle Methods --- #
 

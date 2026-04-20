@@ -218,27 +218,35 @@ class SumFilter:
         """
         Process a message from the gateway by determining if it is a data or EOF message and handling accordingly.
         """
-        fields = message_protocol.internal.deserialize(message)
-        if len(fields) == EXPECTED_GATEWAY_DATA_FIELDS_LENGTH:
-            self._process_data(*fields)
-        else:
-            self._process_eof_from_gateway(*fields)
-        ack()
+        try:
+            fields = message_protocol.internal.deserialize(message)
+            if len(fields) == EXPECTED_GATEWAY_DATA_FIELDS_LENGTH:
+                self._process_data(*fields)
+            else:
+                self._process_eof_from_gateway(*fields)
+            ack()
+        except Exception:
+            nack()
+            raise
 
     def process_data_message_from_control(self, message, ack, nack):
         """
         Process a message from control exchange by determining if it is an EOF or status update message handling accordingly and flushing client data if necessary.
         """
-        fields = message_protocol.internal.deserialize(message)
-        if len(fields) == EXPECTED_CONTROL_EOF_FIELDS_LENGTH:
-            client_data = self._process_eof_from_control(*fields)
-        else:
-            client_data = self._process_status_update(*fields)
+        try:
+            fields = message_protocol.internal.deserialize(message)
+            if len(fields) == EXPECTED_CONTROL_EOF_FIELDS_LENGTH:
+                client_data = self._process_eof_from_control(*fields)
+            else:
+                client_data = self._process_status_update(*fields)
 
-        if client_data is not None:
-            self._flush_client_data(fields[0], client_data)
+            if client_data is not None:
+                self._flush_client_data(fields[0], client_data)
 
-        ack()
+            ack()
+        except Exception:
+            nack()
+            raise
 
     # --- Lifecycle Methods --- #
 

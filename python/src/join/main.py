@@ -68,9 +68,13 @@ class JoinFilter:
         """
         Process a message by handling the corresponding data.
         """
-        fields = message_protocol.internal.deserialize(message)
-        self._process_data(*fields)
-        ack()
+        try:
+            fields = message_protocol.internal.deserialize(message)
+            self._process_data(*fields)
+            ack()
+        except Exception:
+            nack()
+            raise
 
     # --- Lifecycle Methods --- #
 
