@@ -7,21 +7,23 @@ class MessageHandler:
 
     def __init__(self):
         """
-        Initialize the MessageHandler by generating a unique client ID.
+        Initialize the MessageHandler by generating a unique client ID and a message sent counter.
         """
         self.client_id = uuid.uuid4().hex
+        self.messages_sent = 0
 
     def serialize_data_message(self, message):
         """
-        Serialize a data message with the client ID.
+        Serialize a data message with the client ID and increment the message sent counter.
         """
+        self.messages_sent += 1
         return message_protocol.internal.serialize([self.client_id, *message])
 
     def serialize_eof_message(self, message):
         """
-        Serialize an EOF message with the client ID.
+        Serialize an EOF message with the client ID and the total message count.
         """
-        return message_protocol.internal.serialize([self.client_id])
+        return message_protocol.internal.serialize([self.client_id, self.messages_sent])
 
     def deserialize_result_message(self, message):
         """
