@@ -20,6 +20,7 @@ EXPECTED_CONTROL_EOF_FIELDS_LENGTH = 2
 
 
 class SumFilter:
+
     def __init__(self):
         """
         Initialize the filter by setting up input and output messaging infrastructure, internal state, and signal handling for graceful shutdown.
@@ -52,7 +53,7 @@ class SumFilter:
 
         self.fruits_by_client = {}  # {client_id: {fruit: FruitItem}}
 
-        self.local_counts_by_client = {}  # {client_id: count}
+        self.local_count_by_client = {}  # {client_id: count}
         self.node_counts_by_client = {}  # {client_id: {node_id: count}}
         self.expected_total_by_client = {}  # {client_id: expected_total}
 
@@ -73,7 +74,7 @@ class SumFilter:
 
     # --- Auxiliary Methods --- #
 
-    def _broadcast_local_count(self, client_id, local_counts, from_control=False):
+    def _broadcast_local_count(self, client_id, local_count, from_control=False):
         """
         Broadcast the local processed count for a client to the control exchange.
         """
@@ -81,7 +82,7 @@ class SumFilter:
             self.control_output_control_exchange
             if from_control
             else self.output_control_exchange
-        ).send(message_protocol.internal.serialize([client_id, ID, local_counts]))
+        ).send(message_protocol.internal.serialize([client_id, ID, local_count]))
 
     def _should_broadcast_update(self, client_id, fruit, amount):
         """
@@ -93,12 +94,12 @@ class SumFilter:
                 fruit, fruit_item.FruitItem(fruit, 0)
             ) + fruit_item.FruitItem(fruit, int(amount))
 
-            self.local_counts_by_client[client_id] = (
-                self.local_counts_by_client.get(client_id, 0) + 1
+            self.local_count_by_client[client_id] = (
+                self.local_count_by_client.get(client_id, 0) + 1
             )
 
             return (
-                self.local_counts_by_client.get(client_id, 0)
+                self.local_count_by_client.get(client_id, 0)
                 if client_id in self.expected_total_by_client
                 else None
             )
@@ -107,7 +108,7 @@ class SumFilter:
         """
         Pop the data for a client.
         """
-        self.local_counts_by_client.pop(client_id, None)
+        self.local_count_by_client.pop(client_id, None)
         self.node_counts_by_client.pop(client_id, None)
         self.expected_total_by_client.pop(client_id, None)
         return self.fruits_by_client.pop(client_id, {})
@@ -116,17 +117,17 @@ class SumFilter:
         """
         Check if the total processed count (local + global) for a client has reached the expected total.
         """
-        client_local_count = self.local_counts_by_client.get(client_id, 0)
-        client_global_count = sum(
+        local_count = self.local_count_by_client.get(client_id, 0)
+        total_node_counts = sum(
             count
             for node_id, count in self.node_counts_by_client.get(client_id, {}).items()
             if node_id != ID
         )
-        client_expected_total = self.expected_total_by_client.get(client_id)
+        expected_total = self.expected_total_by_client.get(client_id)
 
         return (
-            client_expected_total is not None
-            and client_global_count + client_local_count >= client_expected_total
+            expected_total is not None
+            and total_node_counts + local_count >= expected_total
         )
 
     def _store_expected_total(self, client_id, expected_total):
@@ -135,7 +136,7 @@ class SumFilter:
         """
         with self.client_state_lock:
             self.expected_total_by_client[client_id] = expected_total
-            local_count = self.local_counts_by_client.get(client_id, 0)
+            local_count = self.local_count_by_client.get(client_id, 0)
             if self._has_reached_expected_total(client_id):
                 return (local_count, self._pop_client_data(client_id))
             return (local_count, None)
@@ -182,9 +183,9 @@ class SumFilter:
         Process a data message by updating the internal state and broadcasting the local count if necessary.
         """
         logging.info(f"Processing fruit amount for client: {client_id}")
-        local_counts = self._should_broadcast_update(client_id, fruit, amount)
-        if local_counts is not None:
-            self._broadcast_local_count(client_id, local_counts)
+        local_count = self._should_broadcast_update(client_id, fruit, amount)
+        if local_count is not None:
+            self._broadcast_local_count(client_id, local_count)
 
     def _process_eof_from_gateway(self, client_id, expected_total):
         """

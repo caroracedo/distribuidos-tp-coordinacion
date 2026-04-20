@@ -35,12 +35,16 @@ class AggregationFilter:
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
+    # --- Signal Handling Methods --- #
+
     def _handle_sigterm(self, signum, frame):
         """
         Handle the SIGTERM signal for graceful shutdown.
         """
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
+
+    # --- Message Processing Methods --- #
 
     def _process_data(self, client_id, fruit, amount):
         """
@@ -75,6 +79,8 @@ class AggregationFilter:
             del self.fruit_amounts_by_client[client_id]
             del self.client_eof_counts[client_id]
 
+    # --- Callback Methods --- #
+
     def process_message(self, message, ack, nack):
         """
         Process a message by determining if it is a data or EOF message and handling accordingly.
@@ -85,6 +91,8 @@ class AggregationFilter:
         else:
             self._process_eof(*fields)
         ack()
+
+    # --- Lifecycle Methods --- #
 
     def start(self):
         """
