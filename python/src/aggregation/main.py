@@ -30,8 +30,8 @@ class AggregationFilter:
             MOM_HOST, OUTPUT_QUEUE
         )
 
-        self.fruit_amounts_by_client = {}  # {client_id: {fruit: amount}}
-        self.client_eof_counts = {}  # {client_id: int}
+        self.fruit_amounts_by_client = {}  # {client_id: {fruit: FruitItem}}
+        self.eof_count_by_client = {}  # {client_id: int}
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
@@ -44,6 +44,37 @@ class AggregationFilter:
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
 
+    # --- Auxiliary Methods --- #
+
+    def _update_fruit_amounts(self, client_id, fruit, amount):
+        """
+        Update the fruit amounts for a client.
+        """
+        fruit_top = self.fruit_amounts_by_client.setdefault(client_id, {})
+        fruit_top[fruit] = fruit_top.get(
+            fruit, fruit_item.FruitItem(fruit, 0)
+        ) + fruit_item.FruitItem(fruit, int(amount))
+
+    def _flush_fruit_top(self, client_id):
+        """
+        Flush the aggregated top fruits for a client by computing the top fruits, sending the result, and cleaning up internal state.
+        """
+        fruit_chunk = sorted(self.fruit_amounts_by_client[client_id].values())[
+            -TOP_SIZE:
+        ]
+        fruit_chunk.reverse()
+        fruit_top = list(
+            map(
+                lambda fruit_item: (fruit_item.fruit, fruit_item.amount),
+                fruit_chunk,
+            )
+        )
+        self.output_queue.send(
+            message_protocol.internal.serialize([client_id, fruit_top])
+        )
+        del self.fruit_amounts_by_client[client_id]
+        del self.eof_count_by_client[client_id]
+
     # --- Message Processing Methods --- #
 
     def _process_data(self, client_id, fruit, amount):
@@ -51,33 +82,18 @@ class AggregationFilter:
         Process a data message by updating the fruit amounts for the client.
         """
         logging.info(f"Processing fruit amount for client: {client_id}")
-        fruit_top = self.fruit_amounts_by_client.setdefault(client_id, {})
-        fruit_top[fruit] = fruit_top.get(
-            fruit, fruit_item.FruitItem(fruit, 0)
-        ) + fruit_item.FruitItem(fruit, int(amount))
+        self._update_fruit_amounts(client_id, fruit, amount)
 
     def _process_eof(self, client_id):
         """
-        Process an EOF message by computing and sending the top fruits when all EOF messages are received.
+        Process an EOF message by flushing the top fruits for the client when all EOF messages are received.
         """
         logging.info(f"Received EOF for client: {client_id}")
-        self.client_eof_counts[client_id] = self.client_eof_counts.get(client_id, 0) + 1
-        if self.client_eof_counts[client_id] == SUM_AMOUNT:
-            fruit_chunk = sorted(self.fruit_amounts_by_client[client_id].values())[
-                -TOP_SIZE:
-            ]
-            fruit_chunk.reverse()
-            fruit_top = list(
-                map(
-                    lambda fruit_item: (fruit_item.fruit, fruit_item.amount),
-                    fruit_chunk,
-                )
-            )
-            self.output_queue.send(
-                message_protocol.internal.serialize([client_id, fruit_top])
-            )
-            del self.fruit_amounts_by_client[client_id]
-            del self.client_eof_counts[client_id]
+        self.eof_count_by_client[client_id] = (
+            self.eof_count_by_client.get(client_id, 0) + 1
+        )
+        if self.eof_count_by_client[client_id] == SUM_AMOUNT:
+            self._flush_fruit_top(client_id)
 
     # --- Callback Methods --- #
 

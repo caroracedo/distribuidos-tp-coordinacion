@@ -28,7 +28,7 @@ class JoinFilter:
         )
 
         self.fruit_top_by_client = {}  # {client_id: [(fruit, amount)]}
-        self.client_eof_counts = {}  # {client_id: int}
+        self.completed_count_by_client = {}  # {client_id: int}
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
@@ -41,26 +41,42 @@ class JoinFilter:
         logging.info("SIGTERM received, stopping the filter...")
         self.stop()
 
+    # --- Auxiliary Methods --- #
+
+    def _update_fruit_top(self, client_id, partial_top):
+        """
+        Update the fruit top for a client by adding the partial top received from an aggregator and updating the count of completed aggregators.
+        """
+        self.fruit_top_by_client[client_id] = (
+            self.fruit_top_by_client.get(client_id, []) + partial_top
+        )
+        self.completed_count_by_client[client_id] = (
+            self.completed_count_by_client.get(client_id, 0) + 1
+        )
+
+    def _flush_fruit_top(self, client_id):
+        """
+        Flush the aggregated top fruits for a client, sending the result and cleaning up internal state.
+        """
+        final_top = sorted(
+            self.fruit_top_by_client[client_id], key=lambda x: x[1], reverse=True
+        )[:TOP_SIZE]
+        self.output_queue.send(
+            message_protocol.internal.serialize([client_id, final_top])
+        )
+        del self.fruit_top_by_client[client_id]
+        del self.completed_count_by_client[client_id]
+
     # --- Message Processing Methods --- #
 
     def _process_data(self, client_id, partial_top):
         """
-        Process a data message by aggregating top fruits and sending the final result when all aggregators have sent data.
+        Process a data message by updating the fruit top for the client and flushing the result if all aggregators have reported.
         """
         logging.info(f"Processing partial top for client: {client_id}")
-        self.fruit_top_by_client[client_id] = (
-            self.fruit_top_by_client.get(client_id, []) + partial_top
-        )
-        self.client_eof_counts[client_id] = self.client_eof_counts.get(client_id, 0) + 1
-        if self.client_eof_counts[client_id] == AGGREGATION_AMOUNT:
-            final_top = sorted(
-                self.fruit_top_by_client[client_id], key=lambda x: x[1], reverse=True
-            )[:TOP_SIZE]
-            self.output_queue.send(
-                message_protocol.internal.serialize([client_id, final_top])
-            )
-            del self.fruit_top_by_client[client_id]
-            del self.client_eof_counts[client_id]
+        self._update_fruit_top(client_id, partial_top)
+        if self.completed_count_by_client.get(client_id, 0) == AGGREGATION_AMOUNT:
+            self._flush_fruit_top(client_id)
 
     # --- Callback Methods --- #
 
