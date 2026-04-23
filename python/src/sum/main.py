@@ -254,15 +254,15 @@ class SumFilter:
         Stop consuming messages and close all connections.
         """
         self.input_queue.stop_consuming()
-        self.input_control_exchange.stop_consuming()
+        self.input_control_exchange.stop_consuming_threadsafe()
+        if self.control_thread and self.control_thread.is_alive():
+            self.control_thread.join()
         self.input_queue.close()
         self.input_control_exchange.close()
         self.output_control_exchange.close()
         self.control_output_control_exchange.close()
         for data_output_exchange in self.data_output_exchanges:
             data_output_exchange.close()
-        if self.control_thread and self.control_thread.is_alive():
-            self.control_thread.join()
 
 
 def main():

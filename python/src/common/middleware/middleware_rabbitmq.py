@@ -38,7 +38,6 @@ class MessageMiddlewareRabbitMQBase:
                 f"The connection to the middleware was lost: {e}"
             )
         except Exception as e:
-            self.close()
             raise MessageMiddlewareMessageError(
                 f"An internal error occurred while consuming: {e}"
             )
@@ -50,6 +49,18 @@ class MessageMiddlewareRabbitMQBase:
         """
         try:
             self.channel.stop_consuming()
+        except pika.exceptions.AMQPConnectionError as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"The connection to the middleware was lost: {e}"
+            )
+
+    def stop_consuming_threadsafe(self):
+        """
+        Stops consuming messages from the queue or exchange in a thread-safe manner.
+        If the connection to the middleware is lost, it raises MessageMiddlewareDisconnectedError.
+        """
+        try:
+            self.connection.add_callback_threadsafe(self.channel.stop_consuming)
         except pika.exceptions.AMQPConnectionError as e:
             raise MessageMiddlewareDisconnectedError(
                 f"The connection to the middleware was lost: {e}"
@@ -79,12 +90,9 @@ class MessageMiddlewareQueueRabbitMQ(
         self.queue_name = queue_name
 
         self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=host))
-        try:
-            self.channel = self.connection.channel()
-            self.channel.confirm_delivery()
-            self.channel.queue_declare(queue=self.queue_name, durable=True)
-        except Exception:
-            self.close()
+        self.channel = self.connection.channel()
+        self.channel.confirm_delivery()
+        self.channel.queue_declare(queue=self.queue_name, durable=True)
 
     def send(self, message):
         """
@@ -106,7 +114,6 @@ class MessageMiddlewareQueueRabbitMQ(
                 f"The connection to the middleware was lost: {e}"
             )
         except Exception as e:
-            self.close()
             raise MessageMiddlewareMessageError(
                 f"An internal error occurred while sending: {e}"
             )
@@ -124,23 +131,20 @@ class MessageMiddlewareExchangeRabbitMQ(
         self.routing_keys = routing_keys
 
         self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=host))
-        try:
-            self.channel = self.connection.channel()
-            self.channel.confirm_delivery()
-            self.channel.exchange_declare(
-                exchange=self.exchange_name, exchange_type="direct", durable=True
-            )
+        self.channel = self.connection.channel()
+        self.channel.confirm_delivery()
+        self.channel.exchange_declare(
+            exchange=self.exchange_name, exchange_type="direct", durable=True
+        )
 
-            result = self.channel.queue_declare(queue="", exclusive=True)
-            self.queue_name = result.method.queue
-            for routing_key in self.routing_keys:
-                self.channel.queue_bind(
-                    exchange=self.exchange_name,
-                    queue=self.queue_name,
-                    routing_key=routing_key,
-                )
-        except Exception:
-            self.close()
+        result = self.channel.queue_declare(queue="", exclusive=True)
+        self.queue_name = result.method.queue
+        for routing_key in self.routing_keys:
+            self.channel.queue_bind(
+                exchange=self.exchange_name,
+                queue=self.queue_name,
+                routing_key=routing_key,
+            )
 
     def send(self, message):
         """
@@ -163,7 +167,6 @@ class MessageMiddlewareExchangeRabbitMQ(
                 f"The connection to the middleware was lost: {e}"
             )
         except Exception as e:
-            self.close()
             raise MessageMiddlewareMessageError(
                 f"An internal error occurred while sending: {e}"
             )
