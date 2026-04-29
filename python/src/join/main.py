@@ -47,9 +47,9 @@ class JoinFilter:
         """
         Update the fruit top for a client by adding the partial top received from an aggregator and updating the count of completed aggregators.
         """
-        self.fruit_top_by_client[client_id] = (
-            self.fruit_top_by_client.get(client_id, []) + partial_top
-        )
+        self.fruit_top_by_client[client_id] = self.fruit_top_by_client.get(
+            client_id, []
+        ) + [fruit_item.FruitItem(fruit, amount) for fruit, amount in partial_top]
         self.completed_count_by_client[client_id] = (
             self.completed_count_by_client.get(client_id, 0) + 1
         )
@@ -58,11 +58,16 @@ class JoinFilter:
         """
         Flush the aggregated top fruits for a client, sending the result and cleaning up internal state.
         """
-        final_top = sorted(
-            self.fruit_top_by_client[client_id], key=lambda x: x[1], reverse=True
-        )[:TOP_SIZE]
+        fruit_chunk = sorted(self.fruit_top_by_client[client_id])[-TOP_SIZE:]
+        fruit_chunk.reverse()
+        fruit_top = list(
+            map(
+                lambda fruit_item: (fruit_item.fruit, fruit_item.amount),
+                fruit_chunk,
+            )
+        )
         self.output_queue.send(
-            message_protocol.internal.serialize([client_id, final_top])
+            message_protocol.internal.serialize([client_id, fruit_top])
         )
         del self.fruit_top_by_client[client_id]
         del self.completed_count_by_client[client_id]
